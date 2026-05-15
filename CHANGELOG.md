@@ -1,5 +1,60 @@
 # Changelog
 
+## 0.2.0 — 2026-05-15
+
+### Library
+
+- **Parallel candidate evaluation.** `Core.bestRandomState` now distributes the N
+  candidate shapes across `DispatchQueue.concurrentPerform` workers, each with its
+  own clone of the scratch buffer so per-shape writes don't trample each other. The
+  winning state is re-bound to the canonical buffer (via the new
+  `ShapeState.withBuffer(_:)` helper) before hill-climbing. Falls back to the
+  single-threaded path on single-core devices or via `Core.forceSerialCandidates`.
+  Measured speedup is modest (~1.05–1.13× on an 11-core Mac at typical
+  `candidatesPerStep` values) because the hill-climb stage remains serial and the
+  per-step buffer cloning eats a non-trivial portion of the parallel benefit;
+  bigger wins likely require pooling thread-local buffers and parallelizing
+  hill-climb start points.
+- **`SvgOptimizer`.** New post-processing pass that trims invisible / redundant
+  shapes from the `[ShapeResult]` stream so SVGs don't balloon at 2000+ shapes.
+  Three passes:
+  - Low-contribution drop (delta-score threshold)
+  - Top-N preservation in original z-order
+  - Back-to-front occlusion culling against a coverage mask
+  Returns a `Result` with `kept` / `droppedLowContribution` / `droppedByCap` /
+  `droppedByOcclusion` counts, suitable for "Optimized −34%, removed 612" style
+  UI badges. Presets: `.lossless`, `.mild`, `.aggressive`, `.keepTop(n)`.
+- **`GeometrizeBench` executable target.** A small benchmark that compares serial
+  vs parallel `bestRandomState` over 10 trials. Run with
+  `swift run -c release GeometrizeBench [candidates]`.
+
+### Demo app
+
+Complete redesign:
+
+- **Onboarding** — single hero (AI-generated portrait built from geometric shapes)
+  + serif title + black-pill CTA. Pure cream canvas, no decorative noise.
+- **Photo gallery** — Photos.app-style 3-column tight square grid, no per-tile
+  chrome, system large title, pull-to-refresh, dark-mode safe.
+- **Edit screen** — single image-on-top + floating bottom card pattern.
+  - **Concentric corner radius** computed from `UIScreen._displayCornerRadius`
+    so card corners stay visually parallel to the hardware screen edge.
+  - **Card extends to the screen bottom** via
+    `ignoresSafeArea(.container, edges: .bottom)` — no dead zone above the home
+    indicator, content inside still respects the indicator height.
+  - **Bouncy spring** (`response 0.5, dampingFraction 0.68`) drives the height
+    morph and the inner top-half slide-in / slide-out.
+  - **Three plain icon tabs** replace the previous capsule strip — `Style` /
+    `Shapes` / `Advanced`, active is primary, inactive is quaternary.
+  - **Multi-pill status row** — progress (N / M), similarity ((1−score)·100%),
+    style label.
+  - **Step count slider lives in Style tab** (always one tap away, no longer
+    hidden behind Manual override).
+  - **Full-screen BorderBeam** at the hardware display radius while drawing.
+  - Tap image to start, long-press to peek at the original after a run.
+
+Authored by Suko Kuo ([@kuosuko](https://github.com/kuosuko)).
+
 ## 0.1.0 — 2026-05-15
 
 Initial release. Swift port of [geometrize-haxe](https://github.com/Tw1ddle/geometrize-haxe).

@@ -12,6 +12,11 @@ import Foundation
 
 /// Core algorithm primitives: color fitting, error metrics, and hill-climbing search.
 public enum Core {
+    /// When `true`, `bestRandomState` falls back to the serial implementation regardless
+    /// of core count. Exposed for benchmarking and A/B comparisons; leave `false` in
+    /// production.
+    public static var forceSerialCandidates: Bool = false
+
     /// Calculates the optimal flat color for the area covered by the scanlines, given a target alpha.
     public static func computeColor(target: Bitmap, current: Bitmap, lines: [Scanline], alpha: Int) -> Rgba {
         precondition(alpha >= 0)
@@ -160,7 +165,7 @@ public enum Core {
         let cores = max(1, min(ProcessInfo.processInfo.activeProcessorCount, 8))
         let threadCount = max(1, min(cores, n))
 
-        if threadCount == 1 {
+        if threadCount == 1 || forceSerialCandidates {
             return bestRandomStateSerial(
                 shapes: shapes, alpha: alpha, n: n,
                 target: target, current: current, buffer: buffer, lastScore: lastScore

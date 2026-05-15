@@ -15,6 +15,11 @@ let package = Package(
     ],
     targets: [
         .target(name: "Geometrize"),
-        .testTarget(name: "GeometrizeTests", dependencies: ["Geometrize"])
+        .testTarget(name: "GeometrizeTests", dependencies: ["Geometrize"]),
+        .executableTarget(
+            name: "GeometrizeBench",
+            dependencies: ["Geometrize"],
+            path: "Sources/Bench"
+        )
     ]
 )
