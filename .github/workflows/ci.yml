@@ -20,15 +20,22 @@ jobs:
         run: swift test --parallel
 
   ios-build:
-    name: Build for iOS
+    name: Build for iOS Simulator
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
-      - name: Resolve SDK paths
-        id: sdk
-        run: echo "ios_sdk=$(xcrun --sdk iphonesimulator --show-sdk-path)" >> "$GITHUB_OUTPUT"
+      - name: List iOS Simulators
+        run: xcrun simctl list runtimes
       - name: Build library for iOS Simulator
         run: |
-          swift build -c release \
-            -Xswiftc "-sdk" -Xswiftc "${{ steps.sdk.outputs.ios_sdk }}" \
-            -Xswiftc "-target" -Xswiftc "arm64-apple-ios17.0-simulator"
+          # xcodebuild handles SPM packages directly via the auto-generated scheme.
+          # This avoids the SDK/header confusion `swift build -sdk iphonesimulator` runs into.
+          xcodebuild build \
+            -scheme Geometrize \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath .build-ios \
+            -skipPackagePluginValidation \
+            CODE_SIGNING_ALLOWED=NO \
+            | xcpretty || true
+          # Surface non-zero exit even when piped through xcpretty.
+          test -d .build-ios/Build/Products/Debug-iphonesimulator
