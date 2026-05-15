@@ -1,3 +1,10 @@
+//  FastRandom.swift
+//  Geometrize Swift port — new addition to the lineage.
+//
+//  Replaces `Int.random(in:)` (crypto-grade) on the hot path with a thread-local
+//  SplitMix64 generator plus Lemire's nearly-divisionless bounded random.
+//  Author: Suko Kuo (@kuosuko), 2026. MIT.
+
 import Foundation
 
 /// A fast non-cryptographic PRNG (SplitMix64).

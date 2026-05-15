@@ -1,3 +1,10 @@
+//  ShapeState.swift
+//  Geometrize Swift port — equivalent of upstream `geometrize.State`.
+//  Renamed in the Swift port to avoid colliding with SwiftUI's `@State`.
+//
+//  Swift translation + `withBuffer(_:)` helper for parallel candidate evaluation
+//  by Suko Kuo (@kuosuko), 2026. MIT.
+
 import Foundation
 
 /// A candidate state in the optimization search — a shape plus its evaluation context.
@@ -7,9 +14,9 @@ public final class ShapeState {
     /// Cached energy score. Negative means "needs recalculation".
     public var score: Double
 
-    private let target: Bitmap
-    private let current: Bitmap
-    private let buffer: Bitmap
+    @usableFromInline let target: Bitmap
+    @usableFromInline let current: Bitmap
+    @usableFromInline let buffer: Bitmap
 
     public init(shape: any Shape, alpha: Int, target: Bitmap, current: Bitmap, buffer: Bitmap) {
         self.shape = shape
@@ -40,5 +47,14 @@ public final class ShapeState {
     /// Deep-copies the shape; bitmap references are shared. Score is not preserved.
     public func clone() -> ShapeState {
         ShapeState(shape: shape.clone(), alpha: alpha, target: target, current: current, buffer: buffer)
+    }
+
+    /// Returns a new state bound to a different buffer bitmap. Used when migrating a
+    /// candidate evaluated against a per-thread scratch buffer onto the canonical buffer
+    /// that subsequent stages (hill climb, model add) will use. The cached score is reset.
+    func withBuffer(_ newBuffer: Bitmap) -> ShapeState {
+        let copy = ShapeState(shape: shape, alpha: alpha, target: target, current: current, buffer: newBuffer)
+        copy.score = -1
+        return copy
     }
 }

@@ -1,10 +1,11 @@
 MIT License
 
-Copyright (c) 2026 Geometrize for Swift contributors
+Copyright (c) 2026 Suko Kuo (https://github.com/kuosuko)
+  — Swift port of the geometrize algorithm
 Copyright (c) 2021 Sam Twidale and contributors
-  (original geometrize-haxe library — https://github.com/Tw1ddle/geometrize-haxe)
+  — original geometrize-haxe library (https://github.com/Tw1ddle/geometrize-haxe)
 Copyright (c) 2016 Michael Fogleman
-  (Primitive — https://github.com/fogleman/primitive, the algorithm this lineage descends from)
+  — Primitive (https://github.com/fogleman/primitive), the algorithm this lineage descends from
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

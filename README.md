@@ -135,7 +135,7 @@ This port stands on a chain of prior art:
 
 - The fitting algorithm originates in [primitive](https://github.com/fogleman/primitive) (Go, MIT, © 2016 Michael Fogleman).
 - [geometrize-haxe](https://github.com/Tw1ddle/geometrize-haxe) (Haxe, MIT, © 2021 Sam Twidale and contributors) ported it to Haxe and is the structural reference for this Swift port.
-- This repository is the Swift port (MIT, 2026).
+- This repository is the Swift port, MIT-licensed, authored by **Suko Kuo** ([@kuosuko](https://github.com/kuosuko)), 2026.
 
 See [LICENSE](LICENSE) for full attribution.
 

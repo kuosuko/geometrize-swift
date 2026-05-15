@@ -1,3 +1,13 @@
+//  Core.swift
+//  Geometrize Swift port
+//
+//  Swift translation by Suko Kuo (@kuosuko), 2026.
+//  Original Haxe implementation © 2021 Sam Twidale and contributors
+//  (https://github.com/Tw1ddle/geometrize-haxe).
+//  Algorithm originates in Michael Fogleman's `primitive` (MIT, 2016).
+//
+//  MIT License — see LICENSE in the repository root.
+
 import Foundation
 
 /// Core algorithm primitives: color fitting, error metrics, and hill-climbing search.
@@ -137,7 +147,76 @@ public enum Core {
     }
 
     /// Picks the lowest-energy of `n` randomly generated states.
+    ///
+    /// Candidates are evaluated in parallel via `DispatchQueue.concurrentPerform`. Each
+    /// worker gets its own clone of the buffer bitmap so per-shape scratch writes don't
+    /// trample each other. The winning state is re-bound to the canonical `buffer`
+    /// before being returned, so subsequent hill-climbing uses the model's buffer.
     public static func bestRandomState(
+        shapes: [ShapeType], alpha: Int, n: Int,
+        target: Bitmap, current: Bitmap, buffer: Bitmap, lastScore: Double
+    ) -> ShapeState {
+        precondition(n > 0)
+        let cores = max(1, min(ProcessInfo.processInfo.activeProcessorCount, 8))
+        let threadCount = max(1, min(cores, n))
+
+        if threadCount == 1 {
+            return bestRandomStateSerial(
+                shapes: shapes, alpha: alpha, n: n,
+                target: target, current: current, buffer: buffer, lastScore: lastScore
+            )
+        }
+
+        // One scratch buffer per worker.
+        let buffers: [Bitmap] = (0..<threadCount).map { _ in buffer.clone() }
+        var bestStates: [ShapeState?] = Array(repeating: nil, count: threadCount)
+        var bestEnergies: [Double] = Array(repeating: .infinity, count: threadCount)
+        let xBound = current.width
+        let yBound = current.height
+
+        bestStates.withUnsafeMutableBufferPointer { statesPtr in
+            bestEnergies.withUnsafeMutableBufferPointer { energiesPtr in
+                DispatchQueue.concurrentPerform(iterations: threadCount) { ti in
+                    let startIdx = (n * ti) / threadCount
+                    let endIdx = (n * (ti + 1)) / threadCount
+                    let threadBuffer = buffers[ti]
+
+                    var localBestEnergy: Double = .infinity
+                    var localBestState: ShapeState?
+
+                    for _ in startIdx..<endIdx {
+                        let state = ShapeState(
+                            shape: ShapeFactory.randomShape(of: shapes, xBound: xBound, yBound: yBound),
+                            alpha: alpha,
+                            target: target, current: current, buffer: threadBuffer
+                        )
+                        let energy = state.energy(lastScore: lastScore)
+                        if energy < localBestEnergy {
+                            localBestEnergy = energy
+                            localBestState = state
+                        }
+                    }
+                    statesPtr[ti] = localBestState
+                    energiesPtr[ti] = localBestEnergy
+                }
+            }
+        }
+
+        var bestIdx = 0
+        var bestEnergy = bestEnergies[0]
+        for i in 1..<threadCount {
+            if bestStates[i] != nil, bestEnergies[i] < bestEnergy {
+                bestEnergy = bestEnergies[i]
+                bestIdx = i
+            }
+        }
+        let winner = bestStates[bestIdx]!
+        return winner.withBuffer(buffer)
+    }
+
+    /// Single-threaded variant — used as the fast path for small candidate counts and
+    /// as a fallback on single-core devices.
+    private static func bestRandomStateSerial(
         shapes: [ShapeType], alpha: Int, n: Int,
         target: Bitmap, current: Bitmap, buffer: Bitmap, lastScore: Double
     ) -> ShapeState {

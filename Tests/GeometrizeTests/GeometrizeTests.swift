@@ -105,4 +105,80 @@ final class GeometrizeTests: XCTestCase {
         XCTAssertTrue(json.contains("\"color\""))
         XCTAssertTrue(json.contains("\"score\""))
     }
+
+    // MARK: - Parallel candidates
+
+    /// With many candidates the parallel `bestRandomState` should still converge — i.e.
+    /// the runner should drop the error on a solid-color target.
+    func testParallelCandidatesConverge() {
+        let red = Rgba(r: 220, g: 60, b: 60, a: 255)
+        let target = Bitmap.create(width: 24, height: 24, color: red)
+        let runner = ImageRunner(inputImage: target, backgroundColor: Rgba.opaqueWhite)
+        let initialScore = runner.model.currentScore
+        for _ in 0..<6 {
+            _ = runner.step(ImageRunnerOptions(
+                shapeTypes: [.rectangle], alpha: 255,
+                candidateShapesPerStep: 64, shapeMutationsPerStep: 12
+            ))
+        }
+        XCTAssertLessThan(runner.model.currentScore, initialScore)
+    }
+
+    /// Sanity-check: a single-candidate step still produces exactly one shape and a valid
+    /// (non-negative, finite) score. Hits the threadCount==1 fast path.
+    func testParallelSingleCandidate() {
+        let target = Bitmap.create(width: 8, height: 8, color: Rgba(r: 100, g: 100, b: 100, a: 255))
+        let runner = ImageRunner(inputImage: target, backgroundColor: Rgba.opaqueWhite)
+        let results = runner.step(ImageRunnerOptions(
+            shapeTypes: [.rectangle], alpha: 255,
+            candidateShapesPerStep: 1, shapeMutationsPerStep: 5
+        ))
+        XCTAssertEqual(results.count, 1)
+        XCTAssertTrue(results[0].score.isFinite && results[0].score >= 0)
+    }
+
+    // MARK: - SvgOptimizer
+
+    func testOptimizerLosslessKeepsEverything() {
+        let target = Bitmap.create(width: 16, height: 16, color: Rgba(r: 100, g: 100, b: 100, a: 255))
+        let runner = ImageRunner(inputImage: target, backgroundColor: Rgba.opaqueWhite)
+        var all: [ShapeResult] = []
+        for _ in 0..<5 {
+            all.append(contentsOf: runner.step(ImageRunnerOptions(
+                shapeTypes: [.rectangle], alpha: 255,
+                candidateShapesPerStep: 5, shapeMutationsPerStep: 5
+            )))
+        }
+        let r = SvgOptimizer.optimize(all, options: .lossless)
+        XCTAssertEqual(r.kept, all.count)
+        XCTAssertEqual(r.droppedLowContribution, 0)
+        XCTAssertEqual(r.droppedByCap, 0)
+        XCTAssertEqual(r.droppedByOcclusion, 0)
+    }
+
+    func testOptimizerTopNPreservesOrder() {
+        let target = Bitmap.create(width: 16, height: 16, color: Rgba(r: 200, g: 50, b: 50, a: 255))
+        let runner = ImageRunner(inputImage: target, backgroundColor: Rgba.opaqueWhite)
+        var all: [ShapeResult] = []
+        for _ in 0..<8 {
+            all.append(contentsOf: runner.step(ImageRunnerOptions(
+                shapeTypes: [.rectangle], alpha: 255,
+                candidateShapesPerStep: 5, shapeMutationsPerStep: 5
+            )))
+        }
+        let r = SvgOptimizer.optimize(all, options: .keepTop(3))
+        XCTAssertEqual(r.kept, 3)
+        XCTAssertEqual(r.droppedByCap, all.count - 3)
+
+        // Surviving scores should be monotonic-ish — they were in the original order, so
+        // every kept score appears in the original score list.
+        let originalScores = all.map { $0.score }
+        for s in r.shapes { XCTAssertTrue(originalScores.contains(s.score)) }
+    }
+
+    func testOptimizerEmptyInput() {
+        let r = SvgOptimizer.optimize([], options: .aggressive)
+        XCTAssertEqual(r.kept, 0)
+        XCTAssertEqual(r.originalCount, 0)
+    }
 }
