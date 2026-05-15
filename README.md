@@ -7,6 +7,8 @@
 
 A Swift port of [geometrize-haxe](https://github.com/Tw1ddle/geometrize-haxe) — recreate images as compositions of geometric primitives (rectangles, triangles, ellipses, lines, Bézier curves, …). The algorithm and behavior match the upstream Haxe library; the API has been adapted to feel native in Swift and the hot loops are tuned for Apple silicon.
 
+![Original photo vs vectorize output under the Dense preset](screenshots/dense-preset-comparison.png)
+
 This repo ships two things:
 
 1. **`Geometrize`** — a SwiftPM library, zero dependencies, builds on iOS / macOS / tvOS / visionOS / watchOS.
