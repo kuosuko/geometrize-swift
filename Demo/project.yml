@@ -36,9 +36,10 @@ targets:
           - UIInterfaceOrientationLandscapeRight
     settings:
       base:
-        # Replace these two with your own Apple developer team + a unique bundle ID before running on a device.
-        PRODUCT_BUNDLE_IDENTIFIER: uk.okuso.geometrize
-        DEVELOPMENT_TEAM: VU2K6XF577
+        # Set these to your own Apple developer team and a bundle ID under your prefix
+        # before running on a real device. Simulator builds work fine with these placeholders.
+        PRODUCT_BUNDLE_IDENTIFIER: com.example.geometrize.demo
+        DEVELOPMENT_TEAM: ""
         TARGETED_DEVICE_FAMILY: "1,2"
         SWIFT_VERSION: "5.9"
         ENABLE_PREVIEWS: YES
