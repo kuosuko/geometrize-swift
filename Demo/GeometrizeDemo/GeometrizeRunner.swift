@@ -2,42 +2,53 @@ import Foundation
 import SwiftUI
 import Geometrize
 
-/// How the starting background color is chosen for the approximation.
-enum BackgroundMode: String, CaseIterable, Identifiable {
-    case averageOfImage = "Average"
-    case white = "White"
-    case black = "Black"
-    case custom = "Custom"
-    var id: String { rawValue }
+/// Phase of the editing session — drives EditView's visual state and which controls show.
+enum RunPhase: Equatable {
+    case idle           // Source loaded, nothing started yet
+    case drawing        // Shapes accumulating; image card shows the live canvas
+    case done           // Run completed (either by hitting target count or user stop)
 }
 
-/// View-model that owns an `ImageRunner` and drives it from a background task,
-/// publishing progress so SwiftUI can render the evolving approximation.
+/// View-model that owns the algorithm runner and exposes a small, focused surface to the UI.
 @MainActor
 final class GeometrizeRunner: ObservableObject {
+    struct StyleSummary {
+        let label: String
+        let detail: String
+    }
+
     @Published var sourceImage: UIImage?
     @Published var resultImage: UIImage?
+    @Published var phase: RunPhase = .idle
     @Published var shapeCount: Int = 0
     @Published var score: Double = 0
-    @Published var isRunning = false
 
-    // Tunables surfaced to the UI.
-    @Published var shapeTypes: Set<ShapeType> = [.triangle]
-    @Published var alpha: Double = 128
-    @Published var candidatesPerStep: Double = 50
-    @Published var mutationsPerStep: Double = 100
-    @Published var maxDimension: Double = 256
-    @Published var shapesPerBatch: Double = 1      // Steps to run before UI refresh
-    @Published var targetShapeCount: Double = 500  // Auto-stop after this many shapes (0 = unlimited)
+    // Positional pad (0..1, 0..1) — see derivedParameters() for what the corners mean.
+    @Published var padPosition: CGPoint = .init(x: 0.5, y: 0.5) {
+        didSet { refreshStyleSummary() }
+    }
+    @Published var shapeTypes: Set<ShapeType> = [.triangle, .rotatedEllipse]
+    @Published private(set) var currentStyleSummary = StyleSummary(label: "Balanced", detail: "A solid all-rounder")
 
-    @Published var backgroundMode: BackgroundMode = .averageOfImage
-    @Published var customBackgroundColor: Color = .white
+    // Manual overrides — exposed when the user opens "Advanced". When `useOverrides` is true
+    // these win over the pad position.
+    @Published var useOverrides = false {
+        didSet { refreshStyleSummary() }
+    }
+    @Published var alphaOverride: Double = 128
+    @Published var candidatesOverride: Double = 50
+    @Published var mutationsOverride: Double = 100
+    @Published var maxDimensionOverride: Double = 256
+    @Published var useTargetCountOverride = false
+    @Published var targetCountOverride: Double = 500
 
     private var runner: ImageRunner?
     private var collectedShapes: [ShapeResult] = []
     private var fitWidth = 0
     private var fitHeight = 0
     private var task: Task<Void, Never>?
+
+    // MARK: - Public surface
 
     func loadImage(_ image: UIImage) {
         task?.cancel()
@@ -47,154 +58,169 @@ final class GeometrizeRunner: ObservableObject {
         collectedShapes = []
         shapeCount = 0
         score = 0
-    }
-
-    func resetDefaults() {
-        shapeTypes = [.triangle]
-        alpha = 128
-        candidatesPerStep = 50
-        mutationsPerStep = 100
-        maxDimension = 256
-        shapesPerBatch = 1
-        targetShapeCount = 500
-        backgroundMode = .averageOfImage
-        customBackgroundColor = .white
-    }
-
-    func applyPreset(_ preset: Preset) {
-        shapeTypes = preset.shapeTypes
-        alpha = Double(preset.alpha)
-        candidatesPerStep = Double(preset.candidates)
-        mutationsPerStep = Double(preset.mutations)
-        targetShapeCount = Double(preset.targetCount)
+        phase = .idle
     }
 
     func start() {
-        guard !isRunning, let image = sourceImage, let cg = image.cgImage else { return }
+        guard phase != .drawing, let image = sourceImage, let cg = image.cgImage else { return }
+        let params = derivedParameters()
+        guard let bitmap = Bitmap.from(cgImage: cg, maxDimension: params.maxDimension) else { return }
 
-        let cap = Int(maxDimension)
-        guard let bitmap = Bitmap.from(cgImage: cg, maxDimension: cap) else { return }
-
-        let bg = backgroundColor(for: bitmap)
-        let runner = ImageRunner(inputImage: bitmap, backgroundColor: bg)
+        let runner = ImageRunner(inputImage: bitmap, backgroundColor: bitmap.averageColor())
         self.runner = runner
         self.fitWidth = bitmap.width
         self.fitHeight = bitmap.height
         self.collectedShapes = []
         self.shapeCount = 0
+        // Seed the result image with the blank background so the canvas starts blank,
+        // not as the source image.
+        if let blank = runner.imageData.toCGImage() {
+            self.resultImage = UIImage(cgImage: blank)
+        }
+        self.phase = .drawing
 
         let optionsSnapshot = ImageRunnerOptions(
             shapeTypes: shapeTypes.isEmpty ? [.triangle] : Array(shapeTypes),
-            alpha: Int(alpha),
-            candidateShapesPerStep: Int(candidatesPerStep),
-            shapeMutationsPerStep: Int(mutationsPerStep)
+            alpha: params.alpha,
+            candidateShapesPerStep: params.candidates,
+            shapeMutationsPerStep: params.mutations
         )
-        let batch = max(1, Int(shapesPerBatch))
-        let cap2 = Int(targetShapeCount)
+        let cap = params.targetCount
 
-        isRunning = true
         task = Task.detached(priority: .userInitiated) { [weak self] in
-            await self?.loop(options: optionsSnapshot, batchSize: batch, targetCount: cap2)
+            await self?.loop(options: optionsSnapshot, targetCount: cap)
         }
     }
 
     func stop() {
         task?.cancel()
         task = nil
-        isRunning = false
+        if phase == .drawing { phase = .done }
     }
+
+    /// Reset back to the original image, discarding the run.
+    func reset() {
+        task?.cancel()
+        task = nil
+        runner = nil
+        collectedShapes = []
+        shapeCount = 0
+        score = 0
+        resultImage = nil
+        phase = .idle
+    }
+
+    // MARK: - Style summary
+
+    func styleSummary() -> StyleSummary {
+        currentStyleSummary
+    }
+
+    private func refreshStyleSummary() {
+        currentStyleSummary = resolvedStyleSummary()
+    }
+
+    private func resolvedStyleSummary() -> StyleSummary {
+        if useOverrides { return StyleSummary(label: "Custom", detail: "Manual sliders") }
+        let x = padPosition.x, y = padPosition.y
+        let dx = abs(x - 0.5), dy = abs(y - 0.5)
+        if dx < 0.18 && dy < 0.18 {
+            return StyleSummary(label: "Balanced", detail: "A solid all-rounder")
+        }
+        switch (x < 0.5, y < 0.5) {
+        case (true, true):   return StyleSummary(label: "Speed",   detail: "Quick preview, fewer shapes")
+        case (false, true):  return StyleSummary(label: "Quality", detail: "Refined fits per shape")
+        case (true, false):  return StyleSummary(label: "Sparse",  detail: "Few opaque shapes, stylized")
+        case (false, false): return StyleSummary(label: "Dense",   detail: "Many translucent shapes")
+        }
+    }
+
+    // MARK: - Export
 
     func exportSVG() -> String {
         SvgExporter.export(shapes: collectedShapes, width: fitWidth, height: fitHeight)
     }
-
     func exportJSON() -> String {
         ShapeJsonExporter.export(collectedShapes)
     }
 
-    // MARK: - Internals
+    // MARK: - Parameter derivation
 
-    private func backgroundColor(for bitmap: Bitmap) -> Rgba {
-        switch backgroundMode {
-        case .averageOfImage: return bitmap.averageColor()
-        case .white: return Rgba.opaqueWhite
-        case .black: return Rgba.opaqueBlack
-        case .custom: return customBackgroundColor.toRgba()
-        }
+    struct DerivedParameters {
+        let alpha: Int
+        let candidates: Int
+        let mutations: Int
+        let targetCount: Int
+        let maxDimension: Int
     }
 
-    private func loop(options: ImageRunnerOptions, batchSize: Int, targetCount: Int) async {
+    /// Pad corners:
+    /// - TL (0,0) Speed:   light everything, ~150 target, max dim 192
+    /// - TR (1,0) Quality: high cand+mut, medium target, max dim 320
+    /// - BL (0,1) Sparse:  high alpha (opaque), low candidates, low target
+    /// - BR (1,1) Dense:   low alpha (translucent), many shapes, high target
+    func derivedParameters() -> DerivedParameters {
+        let padParameters = padDerivedParameters()
+        if useOverrides {
+            return DerivedParameters(
+                alpha: Int(alphaOverride),
+                candidates: Int(candidatesOverride),
+                mutations: Int(mutationsOverride),
+                targetCount: Int(targetCountOverride),
+                maxDimension: Int(maxDimensionOverride)
+            )
+        }
+        if useTargetCountOverride {
+            return DerivedParameters(
+                alpha: padParameters.alpha,
+                candidates: padParameters.candidates,
+                mutations: padParameters.mutations,
+                targetCount: Int(targetCountOverride),
+                maxDimension: padParameters.maxDimension
+            )
+        }
+        return padParameters
+    }
+
+    private func padDerivedParameters() -> DerivedParameters {
+        let x = max(0, min(1, padPosition.x))
+        let y = max(0, min(1, padPosition.y))
+        return DerivedParameters(
+            alpha: Int(lerp(140, 140, 220, 100, x, y).rounded()),
+            candidates: Int(lerp(25, 100, 40, 90, x, y).rounded()),
+            mutations: Int(lerp(40, 180, 60, 140, x, y).rounded()),
+            targetCount: Int(lerp(150, 500, 100, 1200, x, y).rounded()),
+            maxDimension: Int(lerp(192, 320, 256, 320, x, y).rounded())
+        )
+    }
+
+    private func lerp(_ tl: Double, _ tr: Double, _ bl: Double, _ br: Double, _ x: Double, _ y: Double) -> Double {
+        let top = tl * (1 - x) + tr * x
+        let bot = bl * (1 - x) + br * x
+        return top * (1 - y) + bot * y
+    }
+
+    // MARK: - Loop
+
+    private func loop(options: ImageRunnerOptions, targetCount: Int) async {
         guard let runner = self.runner else { return }
         while !Task.isCancelled {
-            var batchResults: [ShapeResult] = []
-            for _ in 0..<batchSize {
-                let step = runner.step(options)
-                batchResults.append(contentsOf: step)
-                if Task.isCancelled { break }
-            }
+            let stepResults = runner.step(options)
             let snapshot = runner.imageData.clone()
-            let shouldStop: Bool = await MainActor.run {
-                self.collectedShapes.append(contentsOf: batchResults)
+            let stop: Bool = await MainActor.run {
+                self.collectedShapes.append(contentsOf: stepResults)
                 self.shapeCount = self.collectedShapes.count
-                if let last = batchResults.last { self.score = last.score }
+                if let last = stepResults.last { self.score = last.score }
                 if let cg = snapshot.toCGImage() {
                     self.resultImage = UIImage(cgImage: cg)
                 }
                 return targetCount > 0 && self.collectedShapes.count >= targetCount
             }
-            if shouldStop { break }
+            if stop { break }
             await Task.yield()
         }
-        await MainActor.run { self.isRunning = false }
+        await MainActor.run {
+            if self.phase == .drawing { self.phase = .done }
+        }
     }
-}
-
-extension Color {
-    /// Converts a SwiftUI Color to the library's RGBA8888 type via UIColor.
-    func toRgba() -> Rgba {
-        let ui = UIColor(self)
-        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
-        ui.getRed(&r, green: &g, blue: &b, alpha: &a)
-        return Rgba(
-            r: Int((r * 255).rounded()),
-            g: Int((g * 255).rounded()),
-            b: Int((b * 255).rounded()),
-            a: Int((a * 255).rounded())
-        )
-    }
-}
-
-/// Named presets to make the parameter space easier to explore.
-struct Preset: Identifiable {
-    let id = UUID()
-    let name: String
-    let detail: String
-    let shapeTypes: Set<ShapeType>
-    let alpha: Int
-    let candidates: Int
-    let mutations: Int
-    let targetCount: Int
-
-    static let all: [Preset] = [
-        Preset(name: "Fast preview",
-               detail: "Triangles, low quality, ~150 shapes",
-               shapeTypes: [.triangle],
-               alpha: 128, candidates: 30, mutations: 50, targetCount: 150),
-        Preset(name: "Balanced",
-               detail: "Triangles + rotated ellipses, 500 shapes",
-               shapeTypes: [.triangle, .rotatedEllipse],
-               alpha: 128, candidates: 50, mutations: 100, targetCount: 500),
-        Preset(name: "High quality",
-               detail: "All shapes, more candidates, 800 shapes",
-               shapeTypes: Set(ShapeType.allCases),
-               alpha: 128, candidates: 100, mutations: 200, targetCount: 800),
-        Preset(name: "Stained glass",
-               detail: "Rotated rectangles, opaque, 400 shapes",
-               shapeTypes: [.rotatedRectangle],
-               alpha: 200, candidates: 60, mutations: 120, targetCount: 400),
-        Preset(name: "Linework",
-               detail: "Lines + Béziers, semi-transparent",
-               shapeTypes: [.line, .quadraticBezier],
-               alpha: 90, candidates: 80, mutations: 150, targetCount: 600)
-    ]
 }

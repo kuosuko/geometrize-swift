@@ -25,7 +25,8 @@ targets:
       properties:
         UILaunchScreen: {}
         LSRequiresIPhoneOS: true
-        NSPhotoLibraryUsageDescription: "Pick an image to recreate as geometric shapes."
+        NSPhotoLibraryUsageDescription: "Geometrize reads photos so you can pick which one to recreate as shapes. Nothing leaves your device."
+        NSPhotoLibraryAddUsageDescription: "Geometrize saves the rendered approximation back to your Photos library."
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
         UISupportedInterfaceOrientations~ipad:
@@ -36,8 +37,8 @@ targets:
     settings:
       base:
         # Replace these two with your own Apple developer team + a unique bundle ID before running on a device.
-        PRODUCT_BUNDLE_IDENTIFIER: com.example.geometrize.demo
-        DEVELOPMENT_TEAM: ""
+        PRODUCT_BUNDLE_IDENTIFIER: uk.okuso.geometrize
+        DEVELOPMENT_TEAM: VU2K6XF577
         TARGETED_DEVICE_FAMILY: "1,2"
         SWIFT_VERSION: "5.9"
         ENABLE_PREVIEWS: YES
